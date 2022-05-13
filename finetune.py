@@ -111,7 +111,7 @@ def train(imgL,imgR,disp_L):
         loss.backward()
         optimizer.step()
 
-        return loss.data[0]
+        return loss.item()
 
 def test(imgL,imgR,disp_true):
         model.eval()
@@ -127,12 +127,12 @@ def test(imgL,imgR,disp_true):
 
         #computing 3-px error#
         true_disp = copy.deepcopy(disp_true)
-        index = np.argwhere(true_disp>0)
-        disp_true[index[0][:], index[1][:], index[2][:]] = np.abs(true_disp[index[0][:], index[1][:], index[2][:]]-pred_disp[index[0][:], index[1][:], index[2][:]])
-        correct = (disp_true[index[0][:], index[1][:], index[2][:]] < 3)|(disp_true[index[0][:], index[1][:], index[2][:]] < true_disp[index[0][:], index[1][:], index[2][:]]*0.05)      
+        index = true_disp > 0
+        correct = np.abs(true_disp[index] - pred_disp.squeeze()[index]) > 3
+        correct = correct * ((np.abs(true_disp[index] - pred_disp.squeeze()[index]) / true_disp[index]) > .05)
         torch.cuda.empty_cache()
 
-        return 1-(float(torch.sum(correct))/float(len(index[0])))
+        return 1-(float(torch.sum(correct))/torch.sum(index))
 
 def adjust_learning_rate(optimizer, epoch):
     if epoch <= 200:
@@ -153,19 +153,16 @@ def main():
 	   total_train_loss = 0
 	   total_test_loss = 0
 	   adjust_learning_rate(optimizer,epoch)
-           
-               ## training ##
-           for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(TrainImgLoader):
+	   for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(TrainImgLoader):
                start_time = time.time() 
 
                loss = train(imgL_crop,imgR_crop, disp_crop_L)
-	       print('Iter %d training loss = %.3f , time = %.2f' %(batch_idx, loss, time.time() - start_time))
-	       total_train_loss += loss
+               print('Iter %d training loss = %.3f , time = %.2f' %(batch_idx, loss, time.time() - start_time))
+               total_train_loss += loss
 	   print('epoch %d total training loss = %.3f' %(epoch, total_train_loss/len(TrainImgLoader)))
 	   
-               ## Test ##
 
-           for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
+	   for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
                test_loss = test(imgL,imgR, disp_L)
                print('Iter %d 3-px error in val = %.3f' %(batch_idx, test_loss*100))
                total_test_loss += test_loss
@@ -173,8 +170,8 @@ def main():
 
 	   print('epoch %d total 3-px error in val = %.3f' %(epoch, total_test_loss/len(TestImgLoader)*100))
 	   if total_test_loss/len(TestImgLoader)*100 > max_acc:
-		max_acc = total_test_loss/len(TestImgLoader)*100
-		max_epo = epoch
+               max_acc = total_test_loss/len(TestImgLoader)*100
+               max_epo = epoch
 	   print('MAX epoch %d total test error = %.3f' %(max_epo, max_acc))
 
 	   #SAVE
@@ -186,7 +183,7 @@ def main():
 		    'test_loss': total_test_loss/len(TestImgLoader)*100,
 		}, savefilename)
 	
-        print('full finetune time = %.2f HR' %((time.time() - start_full_time)/3600))
+	print('full finetune time = %.2f HR' %((time.time() - start_full_time)/3600))
 	print(max_epo)
 	print(max_acc)
 

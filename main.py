@@ -13,6 +13,7 @@ import math
 from dataloader import listflowfile as lt
 from dataloader import SecenFlowLoader as DA
 from models import *
+import wandb
 
 parser = argparse.ArgumentParser(description='PSMNet')
 parser.add_argument('--maxdisp', type=int ,default=192,
@@ -94,8 +95,20 @@ def train(imgL,imgR, disp_L):
 
         loss.backward()
         optimizer.step()
+        
+        num_1px = torch.sum(torch.abs(output3[mask] - disp_true[mask]) > 1)
+        num_3px = torch.sum(torch.abs(output3[mask] - disp_true[mask]) > 3)
+        num_5px = torch.sum(torch.abs(output3[mask] - disp_true[mask]) > 5)
+        num_px = torch.sum(mask)
+        end_pt = torch.sqrt(torch.sum(torch.square(disp_true[mask]-output3[mask])))
 
-        return loss.data
+        return {"loss": loss,
+                "num_1px": num_1px,
+                "num_3px": num_3px,
+                "num_5px": num_5px,
+                "num_px": num_px,
+                "end_pt": end_pt
+               }
 
 def test(imgL,imgR,disp_true):
 
@@ -146,48 +159,53 @@ def adjust_learning_rate(optimizer, epoch):
 
 
 def main():
+        start_full_time = time.time()
+        for epoch in range(0, args.epochs):
+           print('This is %d-th epoch' %(epoch))
+           total_train_loss = 0
+           adjust_learning_rate(optimizer,epoch)
 
-	start_full_time = time.time()
-	for epoch in range(0, args.epochs):
-	   print('This is %d-th epoch' %(epoch))
-	   total_train_loss = 0
-	   adjust_learning_rate(optimizer,epoch)
+           ## training ##
+           for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(TrainImgLoader):
+             start_time = time.time()
 
-	   ## training ##
-	   for batch_idx, (imgL_crop, imgR_crop, disp_crop_L) in enumerate(TrainImgLoader):
-	     start_time = time.time()
+             loss = train(imgL_crop,imgR_crop, disp_crop_L)
+             print('Iter %d training loss = %.3f , time = %.2f' %(batch_idx, loss["loss"], time.time() - start_time))
+             total_train_loss += loss["loss"]
+             wandb.log({"loss": loss["loss"],
+                        "1px": loss["num_1px"].item() / loss["num_px"].item(),
+                        "3px": loss["num_3px"].item() / loss["num_px"].item(),
+                        "5px": loss["num_5px"].item() / loss["num_px"].item(),
+                        })
+           print('epoch %d total training loss = %.3f' %(epoch, total_train_loss/len(TrainImgLoader)))
 
-	     loss = train(imgL_crop,imgR_crop, disp_crop_L)
-	     print('Iter %d training loss = %.3f , time = %.2f' %(batch_idx, loss, time.time() - start_time))
-	     total_train_loss += loss
-	   print('epoch %d total training loss = %.3f' %(epoch, total_train_loss/len(TrainImgLoader)))
-
-	   #SAVE
-	   savefilename = args.savemodel+'/checkpoint_'+str(epoch)+'.tar'
-	   torch.save({
-		    'epoch': epoch,
-		    'state_dict': model.state_dict(),
+           #SAVE
+           savefilename = args.savemodel+'/checkpoint_'+str(epoch)+'.tar'
+           torch.save({
+                    'epoch': epoch,
+                    'state_dict': model.state_dict(),
                     'train_loss': total_train_loss/len(TrainImgLoader),
-		}, savefilename)
+                }, savefilename)
 
-	print('full training time = %.2f HR' %((time.time() - start_full_time)/3600))
+        print('full training time = %.2f HR' %((time.time() - start_full_time)/3600))
 
-	#------------- TEST ------------------------------------------------------------
-	total_test_loss = 0
-	for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
-	       test_loss = test(imgL,imgR, disp_L)
-	       print('Iter %d test loss = %.3f' %(batch_idx, test_loss))
-	       total_test_loss += test_loss
+        #------------- TEST ------------------------------------------------------------
+        total_test_loss = 0
+        for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
+               test_loss = test(imgL,imgR, disp_L)
+               print('Iter %d test loss = %.3f' %(batch_idx, test_loss))
+               total_test_loss += test_loss
 
-	print('total test loss = %.3f' %(total_test_loss/len(TestImgLoader)))
-	#----------------------------------------------------------------------------------
-	#SAVE test information
-	savefilename = args.savemodel+'testinformation.tar'
-	torch.save({
-		    'test_loss': total_test_loss/len(TestImgLoader),
-		}, savefilename)
+        print('total test loss = %.3f' %(total_test_loss/len(TestImgLoader)))
+        #----------------------------------------------------------------------------------
+        #SAVE test information
+        savefilename = args.savemodel+'testinformation.tar'
+        torch.save({
+                    'test_loss': total_test_loss/len(TestImgLoader),
+                }, savefilename)
 
 
 if __name__ == '__main__':
+   wandb.init(project='PSMNet-1', entity='johnrso')
    main()
     
